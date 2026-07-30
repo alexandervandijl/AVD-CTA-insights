@@ -1,0 +1,21 @@
+name: Deploy WordPress.org assets
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-assets:
+    name: Deploy icons and banners
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Update WordPress.org assets
+        uses: 10up/action-wordpress-plugin-asset-update@stable
+        env:
+          SVN_USERNAME: ${{ secrets.SVN_USERNAME }}
+          SVN_PASSWORD: ${{ secrets.SVN_PASSWORD }}
+          SLUG: avd-cta-insights
+          IGNORE_OTHER_FILES: true

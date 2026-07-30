@@ -1,8 +1,10 @@
 name: Deploy to WordPress.org
 
 on:
+  workflow_dispatch:
   release:
-    types: [published]
+    types:
+      - published
 
 jobs:
   deploy:

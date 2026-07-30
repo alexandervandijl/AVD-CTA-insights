@@ -1,13 +1,11 @@
 <?php
 /**
  * Plugin Name: AVD CTA Insights
- * Plugin URI: https://alexandervandijl.nl/avd-cta-insights/
  * Description: Meet CTA-kliks, analyseer bezoekersgedrag en ontvang concrete optimalisatievoorstellen voor WordPress.
- * Version: 4.0.0.14
+ * Version: 4.0.0.15
  * Requires at least: 6.4
  * Requires PHP: 8.0
  * Author: Alexander van Dijl
- * Author URI: https://alexandervandijl.nl
  * Text Domain: avd-cta-insights
  * Domain Path: /languages
  * License: GPL v2 or later
@@ -23,7 +21,7 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-loader.php';
 if (!class_exists('AVDCTAI_Plugin')) {
 
     final class AVDCTAI_Plugin {
-        const VERSION = '4.0.0.14';
+        const VERSION = '4.0.0.15';
         const AJAX_ACTION = 'avdctai_event';
         const OPTION_RECENT_EVENTS = 'avdctai_events_recent';
         const OPTION_API_KEY = 'avdctai_api_key';
@@ -117,7 +115,9 @@ if (!class_exists('AVDCTAI_Plugin')) {
             $this->whatsapp_number = preg_replace('/[^0-9]/', '', (string) $this->setting('whatsapp_number', ''));
         }
 
-       private function __construct() {
+        private function __construct() {
+            $this->load_runtime_settings();
+
             add_action('wp_enqueue_scripts', array($this, 'enqueue_assets'));
             add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_assets'));
             add_filter('the_content', array($this, 'inject_content_cta'), 8);
@@ -125,18 +125,15 @@ if (!class_exists('AVDCTAI_Plugin')) {
             add_action('wp_footer', array($this, 'render_popup'), 98);
             add_action('admin_menu', array(new AVDCTAI_Admin($this), 'register_menu'));
             add_action('rest_api_init', array($this, 'register_rest_routes'));
-            add_action('init', array($this, 'register_lead_post_type'));
-            add_action('admin_post_avdctai_business_scan_submit', array($this, 'handle_bedrijfsscan_submit'));
-            add_action('admin_post_nopriv_avdctai_business_scan_submit', array($this, 'handle_bedrijfsscan_submit'));
-            add_filter('manage_' . self::LEAD_POST_TYPE . '_posts_columns', array($this, 'lead_columns'));
-            add_action('manage_' . self::LEAD_POST_TYPE . '_posts_custom_column', array($this, 'lead_column_content'), 10, 2);
 
             add_action('wp_ajax_' . self::AJAX_ACTION, array($this, 'track_event'));
             add_action('wp_ajax_nopriv_' . self::AJAX_ACTION, array($this, 'track_event'));
 
             add_shortcode('avdctai_cta', array($this, 'shortcode_cta'));
-            add_shortcode('avdctai_paid_help', array($this, 'shortcode_paid_help'));
-            add_shortcode('avdctai_business_scan_form', array($this, 'shortcode_bedrijfsscan_form'));
+
+            // Backwards-compatible aliases. These now render the generic CTA.
+            add_shortcode('avdctai_paid_help', array($this, 'shortcode_cta'));
+            add_shortcode('avdctai_business_scan_form', array($this, 'shortcode_cta'));
         }
 
         public function enqueue_assets() {
@@ -249,11 +246,7 @@ JS;
                 return $content;
             }
 
-            if (!in_the_loop() || !is_main_query()) {
-                return $content;
-            }
-
-            if (self::$content_cta_injected) {
+            if (!in_the_loop() || !is_main_query() || self::$content_cta_injected) {
                 return $content;
             }
 
@@ -261,19 +254,9 @@ JS;
                 return $content;
             }
 
-            if (strpos($content, 'avd-uber-content-cta') !== false) {
-                return $content;
-            }
+            $cta = $this->render_generic_cta('content');
 
-            $context = $this->get_page_context();
-
-            if ($context === 'ignore') {
-                return $content;
-            }
-
-            $cta = $this->render_content_cta($context, 'content_top');
-
-            if (!$cta) {
+            if ($cta === '') {
                 return $content;
             }
 
@@ -283,422 +266,118 @@ JS;
         }
 
         public function shortcode_cta($atts = array()) {
-            if (!$this->setting_enabled('content_cta_enabled')) {
-                return '';
-            }
+            $atts = shortcode_atts(
+                array(
+                    'source' => 'shortcode',
+                    'title'  => '',
+                    'text'   => '',
+                    'label'  => '',
+                    'url'    => '',
+                ),
+                $atts,
+                'avdctai_cta'
+            );
 
-            $atts = shortcode_atts(array(
-                'type' => '',
-                'source' => 'shortcode',
-            ), $atts, 'avdctai_cta');
-
-            $context = sanitize_key($atts['type']);
-            if (!$context) {
-                $context = $this->get_page_context();
-            }
-
-            return $this->render_content_cta($context, sanitize_key($atts['source']));
-        }
-
-        public function shortcode_paid_help($atts = array()) {
-            if (!$this->setting_enabled('content_cta_enabled')) {
-                return '';
-            }
-
-            return $this->paid_help_block('shortcode_betaalde_hulp');
+            return $this->render_generic_cta(
+                sanitize_key($atts['source']),
+                array(
+                    'title' => sanitize_text_field($atts['title']),
+                    'text'  => sanitize_textarea_field($atts['text']),
+                    'label' => sanitize_text_field($atts['label']),
+                    'url'   => esc_url_raw($atts['url']),
+                )
+            );
         }
 
         private function get_page_context() {
-            if (is_admin() || $this->is_pixelverification()) {
-                return 'ignore';
-            }
-
-            $path = $this->path();
-            $slug = $this->slug();
-            $title = strtolower(wp_strip_all_tags(get_the_title()));
-            $combined = trim($path . ' ' . $slug . ' ' . $title);
-
-            if ($this->contains_any($combined, array('gratis-bedrijfsscan', 'bedrijfsscan'))) {
-                return 'landing';
-            }
-
-            if ($this->contains_any($combined, array(
-                'ai-assistent',
-                'ai assistent',
-                'ai-chatbot',
-                'ai chatbot',
-                'chatbot',
-                'zakelijk',
-                'business',
-                'automatisering',
-                'google-sheets',
-                'google sheets',
-                'voice-ai',
-                'voice ai',
-                'whatsapp-business',
-                'whatsapp business',
-                'computerhulp',
-                'bedrijfsscan-aanvragen'
-            ))) {
-                return 'business';
-            }
-
-            if (is_front_page() || is_home() || $path === '') {
+            if (is_front_page() || is_home()) {
                 return 'home';
             }
 
-            if ($this->contains_any($combined, array('doneer', 'doneren', 'donatie'))) {
-                return 'donate';
+            if (is_singular('post')) {
+                return 'post';
             }
 
-            if ($this->contains_any($combined, array('contact', 'contactpagina'))) {
-                return 'contact';
+            if (is_page()) {
+                return 'page';
             }
 
-            if ($this->contains_any($combined, array('0906', '0909'))) {
-                return 'paid_number';
+            if (is_search()) {
+                return 'search';
             }
 
-            if ($this->contains_any($combined, array('woningnet', 'woonnet', 'woonnet-rijnmond'))) {
-                return 'woningnet';
+            if (is_404()) {
+                return '404';
             }
 
-            if ($this->contains_any($combined, array(
-                'buitenland',
-                'vanuit-het-buitenland',
-                'vanuit buitenland',
-                '0800-nummer',
-                '0800 nummer',
-                '085-en-088',
-                '085 en 088',
-                'vast-nummer-bellen',
-                'vast nummer bellen',
-                'internationale-telefoonnummers',
-                'internationale telefoonnummers',
-                'noodnummers-buitenland',
-                'noodnummers buitenland',
-                'simpel-bellen-buitenland',
-                'simpel bellen buitenland',
-                'ik-kan-niet-bellen',
-                'ik kan niet bellen'
-            ))) {
-                return 'international';
-            }
-
-            if ($this->contains_any($combined, array(
-                'telefoonnummer-blokkeren',
-                'telefoonnummer blokkeren',
-                'telefoonkosten-werk-vergoeden',
-                'telefoonkosten werk vergoeden',
-                'vaste-telefoon',
-                'vaste telefoon'
-            ))) {
-                return 'phone_help';
-            }
-
-            if (is_singular('bedrijf') || has_category('bedrijven') || has_tag('bedrijven')) {
-                return 'company';
-            }
-
-            if ($this->contains_any($combined, array(
-                'shein',
-                'gls',
-                'decathlon',
-                'anwb',
-                'snappcar',
-                'rentumo',
-                'uwv',
-                'klantenservice',
-                'telefoon-bellen',
-                'telefoon bellen',
-                'wegenwacht',
-                'bellen?'
-            ))) {
-                return 'company';
+            if (is_archive()) {
+                return 'archive';
             }
 
             return 'default';
         }
 
-        private function render_content_cta($context, $source = 'content_top') {
-            switch ($context) {
-                case 'landing':
-                    return '';
-                case 'business':
-                    return $this->cta_business_scan($source);
-                case 'home':
-                    return $this->cta_home($source);
-                case 'contact':
-                    return $this->cta_contact($source);
-                case 'donate':
-                    return $this->cta_donate($source);
-                case 'woningnet':
-                    return $this->cta_woningnet($source);
-                case 'international':
-                    return $this->cta_international($source);
-                case 'phone_help':
-                    return $this->cta_phone_help($source);
-                case 'paid_number':
-                    return $this->cta_paid_number($source);
-                case 'company':
-                    return $this->cta_company($source);
-                case 'default':
-                    return $this->cta_default($source);
-                default:
-                    return '';
+        private function generic_cta_values($overrides = array()) {
+            $values = array(
+                'title' => sanitize_text_field((string) $this->setting('cta_title', '')),
+                'text'  => sanitize_textarea_field((string) $this->setting('cta_text', '')),
+                'label' => sanitize_text_field((string) $this->setting('cta_button_label', '')),
+                'url'   => esc_url_raw((string) $this->setting('cta_button_url', '')),
+            );
+
+            foreach ($values as $key => $value) {
+                if (isset($overrides[$key]) && $overrides[$key] !== '') {
+                    $values[$key] = $overrides[$key];
+                }
             }
+
+            return $values;
         }
 
-        private function cta_business_scan($source) {
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-business" data-avd-cta-context="business">
-                <div class="avd-uber-card avd-uber-card-business">
-                    <p class="avd-uber-eyebrow">Voor ondernemers</p>
-                    <h2>Wil je meer klanten, minder werk of slimmer klantcontact?</h2>
-                    <p>Vraag gratis de bedrijfsscan aan. Ik kijk waar jouw bedrijf snel kan winnen met AI, telefonie, automatisering, bereikbaarheid en lead capture.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bedrijfsscan', 'Vraag gratis bedrijfsscan aan', home_url('/gratis-bedrijfsscan-2/'), $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('ai_assistent', 'Bekijk AI-assistent', home_url('/ai-assistent/'), $source, 'secondary')); ?>
-                    </div>
-                    <p class="avd-uber-small">Gratis en vrijblijvend. Meestal binnen één werkdag reactie.</p>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
+        private function render_generic_cta($source = 'generic', $overrides = array()) {
+            $values = $this->generic_cta_values($overrides);
 
-        private function cta_home($source) {
-            $wa_text = 'Hoi Alexander, ik heb hulp nodig met bellen of doorverbinden via AlexandervanDijl.nl.';
-            $paid_text = 'Hoi Alexander, ik wil graag dat jij namens mij belt of iets uitzoekt.';
+            if ($values['title'] === '' && $values['text'] === '' && ($values['label'] === '' || $values['url'] === '')) {
+                return '';
+            }
 
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-home" data-avd-cta-context="home">
-                <div class="avd-uber-card avd-uber-card-hero">
-                    <p class="avd-uber-eyebrow">Gratis doorverbindservice</p>
-                    <h2>Bel makkelijker via <?php echo esc_html($this->base_phone_display); ?></h2>
-                    <p>Bel het basisnummer en toets daarna het volledige telefoonnummer in dat je wilt bereiken. Handig bij 0800-, 0900-, 14+ nummers, vaste nummers en bellen vanuit het buitenland.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bel', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('bedrijfsscan', 'Gratis bedrijfsscan voor bedrijven', home_url('/gratis-bedrijfsscan-2/'), $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Vraag hulp via WhatsApp', $this->whatsapp_url($wa_text), $source, 'tertiary')); ?>
-                    </div>
-                    <p class="avd-uber-small">Je betaalt alleen je normale belkosten naar het basisnummer. Persoonlijk uitzoekwerk kan tegen een vaste prijs.</p>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_contact($source) {
-            $wa_text = 'Hoi Alexander, ik kom via de contactpagina en heb een vraag.';
-            $paid_text = 'Hoi Alexander, ik wil graag betaalde hulp aanvragen.';
-
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-contact" data-avd-cta-context="contact">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Snelste route</p>
-                    <h2>Waarmee kan ik je helpen?</h2>
-                    <p>Kies direct de optie die past. Zo hoeft niemand te zoeken naar een knop die ergens onderaan verstopt zit als een sok in de wasmachine.</p>
-                    <div class="avd-uber-choice-grid">
-                        <?php echo wp_kses_post($this->choice('bedrijfsscan', 'Gratis bedrijfsscan', 'Voor ondernemers en bedrijven', home_url('/gratis-bedrijfsscan-2/'), $source)); ?>
-                        <?php echo wp_kses_post($this->choice('bel', 'Gratis doorverbinden', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source)); ?>
-                        <?php echo wp_kses_post($this->choice('whatsapp', 'WhatsApp hulp', 'Stuur direct je vraag', $this->whatsapp_url($wa_text), $source)); ?>
-                        <?php echo wp_kses_post($this->choice('betaalde_hulp', 'Laat mij bellen', 'Voor €60 namens jou uitzoeken', $this->paid_help_url($paid_text), $source)); ?>
-                    </div>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_donate($source) {
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-donate" data-avd-cta-context="donate">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Steun gratis hulp</p>
-                    <h2>Help AlexandervanDijl.nl online houden</h2>
-                    <p>Heeft de gratis doorverbindservice of informatie op deze site je geholpen? Een kleine donatie helpt om de dienst beschikbaar te houden.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('donatie', 'Doneer via Tikkie', 'https://link.vraagalex.com/tikkie', $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('donatie_paypal', 'Doneer via PayPal', 'https://www.paypal.com/ncp/payment/CCHK5S3ZBQLFQ', $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('bel', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'tertiary')); ?>
-                    </div>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_woningnet($source) {
-            $name = $this->page_subject('Woningnet');
-            $wa_text = 'Hoi Alexander, ik heb hulp nodig met ' . $name . '.';
-            $paid_text = 'Hoi Alexander, ik wil graag dat jij meekijkt of namens mij contact probeert te leggen met ' . $name . '.';
-
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-woningnet" data-avd-cta-context="woningnet">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Woningnet / Woonnet hulp</p>
-                    <h2><?php echo esc_html($name); ?> bereiken of hulp nodig?</h2>
-                    <p>Bel via <?php echo esc_html($this->base_phone_display); ?> en toets daarna het nummer in dat je wilt bereiken. Loop je vast met inschrijven, reageren of bereikbaarheid? App mij dan je vraag.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bel', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'App voor hulp', $this->whatsapp_url($wa_text), $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('betaalde_hulp', 'Laat Alexander meekijken', $this->paid_help_url($paid_text), $source, 'tertiary')); ?>
-                    </div>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_international($source) {
-            $wa_text = 'Hoi Alexander, ik probeer vanuit het buitenland te bellen en kom er niet uit.';
-            $paid_text = 'Hoi Alexander, ik wil graag dat jij uitzoekt hoe ik dit nummer vanuit het buitenland kan bereiken.';
-
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-international" data-avd-cta-context="international">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Bellen vanuit het buitenland</p>
-                    <h2>Wil je direct een Nederlands nummer bellen?</h2>
-                    <p>Bel vanuit het buitenland naar <strong><?php echo esc_html($this->base_phone_international_display); ?></strong>. Toets daarna het volledige Nederlandse nummer in dat je wilt bereiken en wacht tot je wordt doorverbonden.</p>
-                    <div class="avd-uber-steps">
-                        <span>1. Bel <?php echo esc_html($this->base_phone_international_display); ?></span>
-                        <span>2. Toets het Nederlandse nummer in</span>
-                        <span>3. Wacht op de verbinding</span>
-                    </div>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bel', 'Bel nu via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Werkt het niet? App mij', $this->whatsapp_url($wa_text), $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('betaalde_hulp', 'Laat het nummer uitzoeken', $this->paid_help_url($paid_text), $source, 'tertiary')); ?>
-                    </div>
-                    <p class="avd-uber-small">Binnen Nederland bel je gewoon <?php echo esc_html($this->base_phone_display); ?>. Vanuit het buitenland gebruik je <?php echo esc_html($this->base_phone_international_display); ?>.</p>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_phone_help($source) {
-            $wa_text = 'Hoi Alexander, ik heb hulp nodig met een telefoonprobleem.';
-            $paid_text = 'Hoi Alexander, ik wil graag hulp met mijn telefooninstellingen of bereikbaarheid.';
-
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-phone-help" data-avd-cta-context="phone_help">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Telefoniehulp</p>
-                    <h2>Kom je er niet uit met bellen, blokkeren of bereikbaarheid?</h2>
-                    <p>Ik help met praktische telefoonvragen, vaste telefonie, bereikbaarheid en doorverbinden. Begin gratis met de doorverbindservice of stuur je vraag via WhatsApp.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bel', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Stel je vraag via WhatsApp', $this->whatsapp_url($wa_text), $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('betaalde_hulp', 'Vraag persoonlijke hulp aan', $this->paid_help_url($paid_text), $source, 'tertiary')); ?>
-                    </div>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_paid_number($source) {
-            $wa_text = 'Hoi Alexander, ik heb een vraag over een betaald telefoonnummer.';
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-paid-number" data-avd-cta-context="paid_number">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Let op met betaalde nummers</p>
-                    <h2>0906- en 0909-nummers kunnen niet gratis worden doorverbonden</h2>
-                    <p>Voor betaalde servicenummers gelden aparte regels. Heb je twijfel over kosten of bereikbaarheid? Stel je vraag eerst voordat je onnodig geld uitgeeft.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Vraag advies via WhatsApp', $this->whatsapp_url($wa_text), $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('donatie', 'Steun de gratis dienst', home_url('/doneer/'), $source, 'secondary')); ?>
-                    </div>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_company($source) {
-            $name = $this->page_subject('dit bedrijf');
-            $wa_text = 'Hoi Alexander, ik probeer ' . $name . ' te bereiken en kom er niet uit.';
-            $paid_text = 'Hoi Alexander, ik wil graag dat jij namens mij contact probeert te leggen met ' . $name . '.';
-
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-company" data-avd-cta-context="company">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Snel contact zoeken</p>
-                    <h2><?php echo esc_html($name); ?> bellen?</h2>
-                    <p>Gebruik de gratis doorverbindservice via <?php echo esc_html($this->base_phone_display); ?>. Toets daarna het volledige telefoonnummer in van <?php echo esc_html($name); ?>.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bel', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Geen gehoor? App mij', $this->whatsapp_url($wa_text), $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('betaalde_hulp', 'Laat Alexander bellen', $this->paid_help_url($paid_text), $source, 'tertiary')); ?>
-                    </div>
-                    <div class="avd-uber-business-strip">
-                        <strong>Heb jij zelf een bedrijf?</strong>
-                        <span>Ontdek hoe AI, telefonie en automatisering jouw bereikbaarheid en leads kunnen verbeteren.</span>
-                        <?php echo wp_kses_post($this->button('bedrijfsscan', 'Gratis bedrijfsscan', home_url('/gratis-bedrijfsscan-2/'), $source, 'secondary')); ?>
-                    </div>
-                    <p class="avd-uber-small">Lukt het niet via de klantenservice? Dan kan ik tegen een vast bedrag meekijken of namens jou contact proberen te leggen.</p>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function cta_default($source) {
-            $wa_text = 'Hoi Alexander, ik heb een vraag via AlexandervanDijl.nl.';
-            $paid_text = 'Hoi Alexander, ik wil graag persoonlijke hulp aanvragen.';
-
-            ob_start();
-            ?>
-            <section class="avd-uber-content-cta avd-uber-content-default" data-avd-cta-context="default">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Hulp nodig?</p>
-                    <h2>Kies direct je volgende stap</h2>
-                    <p>Je kunt gratis doorverbinden, je vraag stellen via WhatsApp of persoonlijke hulp aanvragen.</p>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('bel', 'Bel via ' . $this->base_phone_display, $this->base_phone_tel, $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Stel je vraag via WhatsApp', $this->whatsapp_url($wa_text), $source, 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('betaalde_hulp', 'Vraag persoonlijke hulp aan', $this->paid_help_url($paid_text), $source, 'tertiary')); ?>
-                    </div>
-                </div>
-            </section>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        private function paid_help_block($source = 'paid_help_block') {
             $source = sanitize_key($source);
-            $wa_text = 'Hoi Alexander, ik wil graag gebruikmaken van betaalde hulp.';
+            $context = $this->get_page_context();
 
             ob_start();
             ?>
-            <section class="avd-uber-paid-help" data-avd-cta-context="betaalde_hulp_blok">
-                <div class="avd-uber-card">
-                    <p class="avd-uber-eyebrow">Persoonlijke hulp</p>
-                    <h2>Geen zin om zelf in de wacht te staan?</h2>
-                    <p>Voor een vast bedrag van €60 kan ik namens jou proberen contact te leggen, het juiste kanaal zoeken of je helpen met één duidelijke klantenservicevraag.</p>
-                    <ul class="avd-uber-list">
-                        <li>Geschikt bij moeilijk bereikbare klantenservices.</li>
-                        <li>Handig als je niet weet welk nummer of formulier je nodig hebt.</li>
-                        <li>Maximaal 3 vragen of één duidelijke casus.</li>
-                    </ul>
-                    <div class="avd-uber-button-row">
-                        <?php echo wp_kses_post($this->button('betaalde_hulp', 'Vraag betaalde hulp aan', $this->paid_help_url($wa_text), $source, 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('whatsapp', 'Eerst overleggen via WhatsApp', $this->whatsapp_url($wa_text), $source, 'secondary')); ?>
+            <section class="avd-uber-content-cta avdctai-content-cta" data-avdctai-cta-context="<?php echo esc_attr($context); ?>">
+                <div class="avd-uber-card avdctai-card">
+                    <?php if ($values['title'] !== '') : ?>
+                        <h2><?php echo esc_html($values['title']); ?></h2>
+                    <?php endif; ?>
+
+                    <?php if ($values['text'] !== '') : ?>
+                        <p><?php echo esc_html($values['text']); ?></p>
+                    <?php endif; ?>
+
+                    <div class="avd-uber-button-row avdctai-button-row">
+                        <?php
+                        if ($values['label'] !== '' && $values['url'] !== '') {
+                            echo wp_kses_post($this->button('cta_click', $values['label'], $values['url'], $source, 'primary'));
+                        }
+
+                        if ($this->base_phone_tel !== '') {
+                            $phone_label = $this->base_phone_display !== ''
+                                ? sprintf(__('Bel %s', 'avd-cta-insights'), $this->base_phone_display)
+                                : __('Bellen', 'avd-cta-insights');
+                            echo wp_kses_post($this->button('tel_click', $phone_label, $this->base_phone_tel, $source, 'secondary'));
+                        }
+
+                        if ($this->whatsapp_number !== '') {
+                            echo wp_kses_post($this->button('whatsapp_click', __('WhatsApp', 'avd-cta-insights'), $this->whatsapp_url(), $source, 'tertiary'));
+                        }
+                        ?>
                     </div>
                 </div>
             </section>
             <?php
+
             return trim(ob_get_clean());
         }
 
@@ -711,83 +390,40 @@ JS;
                 return;
             }
 
-            $context = $this->get_page_context();
-            if ($context === 'ignore' || $context === 'landing') {
+            $values = $this->generic_cta_values();
+
+            if ($values['title'] === '' && ($values['label'] === '' || $values['url'] === '') && $this->base_phone_tel === '' && $this->whatsapp_number === '') {
                 return;
             }
-
-            $subject = $this->page_subject('hulp');
-            $wa_text = 'Hoi Alexander, ik kom via AlexandervanDijl.nl en heb hulp nodig.';
-            $paid_text = 'Hoi Alexander, ik wil graag dat jij iets voor mij uitzoekt of namens mij belt.';
-
-            if ($context === 'company') {
-                $wa_text = 'Hoi Alexander, ik probeer ' . $subject . ' te bereiken en kom er niet uit.';
-                $paid_text = 'Hoi Alexander, ik wil graag dat jij namens mij contact probeert te leggen met ' . $subject . '.';
-            }
-
-            if ($context === 'international') {
-                $wa_text = 'Hoi Alexander, ik probeer vanuit het buitenland te bellen en kom er niet uit.';
-                $subject = 'bellen vanuit het buitenland';
-            }
-
             ?>
-            <div class="avd-uber-cta-wrapper" data-avd-cta-context="<?php echo esc_attr($context); ?>" aria-label="Snelle hulp">
-                <button class="avd-cta-close" type="button" aria-label="Sluit">×</button>
-                <div class="avd-cta-title"><?php echo esc_html($this->sticky_title($context, $subject)); ?></div>
-                <div class="avd-cta-desc"><?php echo esc_html($this->sticky_desc($context)); ?></div>
+            <div class="avd-uber-cta-wrapper avdctai-sticky" data-avdctai-cta-context="<?php echo esc_attr($this->get_page_context()); ?>" aria-label="<?php esc_attr_e('Oproep tot actie', 'avd-cta-insights'); ?>">
+                <button class="avd-cta-close avdctai-cta-close" type="button" aria-label="<?php esc_attr_e('Sluiten', 'avd-cta-insights'); ?>">×</button>
+
+                <?php if ($values['title'] !== '') : ?>
+                    <div class="avd-cta-title"><?php echo esc_html($values['title']); ?></div>
+                <?php endif; ?>
+
+                <?php if ($values['text'] !== '') : ?>
+                    <div class="avd-cta-desc"><?php echo esc_html($values['text']); ?></div>
+                <?php endif; ?>
+
                 <div class="avd-cta-buttons">
-                    <?php if (in_array($context, array('business','contact','home'), true)) : ?>
-                        <?php echo wp_kses_post($this->legacy_button('bedrijfsscan', 'Gratis bedrijfsscan', home_url('/gratis-bedrijfsscan-2/'), 'sticky_bar', 'bedrijfsscan')); ?>
-                    <?php endif; ?>
-                    <?php echo wp_kses_post($this->legacy_button('bel', 'Bel ' . $this->base_phone_display, $this->base_phone_tel, 'sticky_bar', 'bel')); ?>
-                    <?php echo wp_kses_post($this->legacy_button('whatsapp', 'WhatsApp', $this->whatsapp_url($wa_text), 'sticky_bar', 'vraag')); ?>
-                    <?php if (!in_array($context, array('business','home'), true)) : ?>
-                        <?php echo wp_kses_post($this->legacy_button('betaalde_hulp', 'Hulp €60', $this->paid_help_url($paid_text), 'sticky_bar', 'hulp')); ?>
-                        <?php echo wp_kses_post($this->legacy_button('donatie', 'Steun €2', home_url('/doneer/'), 'sticky_bar', 'donatie')); ?>
-                    <?php endif; ?>
+                    <?php
+                    if ($values['label'] !== '' && $values['url'] !== '') {
+                        echo wp_kses_post($this->legacy_button('cta_click', $values['label'], $values['url'], 'sticky_bar', 'primary'));
+                    }
+
+                    if ($this->base_phone_tel !== '') {
+                        echo wp_kses_post($this->legacy_button('tel_click', __('Bellen', 'avd-cta-insights'), $this->base_phone_tel, 'sticky_bar', 'secondary'));
+                    }
+
+                    if ($this->whatsapp_number !== '') {
+                        echo wp_kses_post($this->legacy_button('whatsapp_click', __('WhatsApp', 'avd-cta-insights'), $this->whatsapp_url(), 'sticky_bar', 'tertiary'));
+                    }
+                    ?>
                 </div>
             </div>
             <?php
-        }
-
-        private function sticky_title($context, $subject) {
-            if ($context === 'international') {
-                return 'Bellen vanuit het buitenland?';
-            }
-
-            if ($context === 'company') {
-                return $subject . ' bereiken?';
-            }
-
-            if ($context === 'woningnet') {
-                return 'Woningnet hulp nodig?';
-            }
-
-            if ($context === 'contact') {
-                return 'Kies je snelste route';
-            }
-
-            if ($context === 'business') {
-                return 'Gratis bedrijfsscan?';
-            }
-
-            return 'Hulp nodig?';
-        }
-
-        private function sticky_desc($context) {
-            if ($context === 'international') {
-                return 'Bel +31 20 262 1789 en toets daarna het Nederlandse nummer in.';
-            }
-
-            if ($context === 'company') {
-                return 'Bel gratis door of vraag hulp als je vastloopt.';
-            }
-
-            if ($context === 'woningnet') {
-                return 'Bel door, app je vraag of laat meekijken.';
-            }
-
-            return 'Bel gratis, app je vraag of vraag persoonlijke hulp aan.';
         }
 
         public function render_popup() {
@@ -795,27 +431,30 @@ JS;
                 return;
             }
 
-            $context = $this->get_page_context();
-            if ($context === 'ignore' || $context === 'landing' || $context === 'donate' || $context === 'paid_number') {
+            $values = $this->generic_cta_values();
+
+            if ($values['title'] === '' && $values['text'] === '' && ($values['label'] === '' || $values['url'] === '')) {
                 return;
             }
-
-            $wa_text = 'Hoi Alexander, ik kom via AlexandervanDijl.nl en loop vast. Kun je helpen?';
-            $paid_text = 'Hoi Alexander, ik wil graag dat jij iets voor mij uitzoekt of namens mij belt.';
             ?>
-            <div id="avdUberPopup" class="avd-uber-popup" aria-hidden="true" data-avd-cta-context="<?php echo esc_attr($context); ?>">
-                <div class="avd-uber-popup-backdrop" data-avd-popup-close="1"></div>
-                <div class="avd-uber-popup-box" role="dialog" aria-modal="true" aria-label="Hulp nodig?">
-                    <button type="button" class="avd-uber-popup-close" data-avd-popup-close="1" aria-label="Sluiten">×</button>
-                    <p class="avd-uber-eyebrow">Hulp nodig?</p>
-                    <h2>Kom je er niet uit?</h2>
-                    <p>Probeer gratis door te verbinden of stuur mij je vraag. Als het ingewikkelder is, kan ik het persoonlijk voor je uitzoeken.</p>
-                    <div class="avd-uber-button-column">
-                        <?php echo wp_kses_post($this->button('popup_bel', 'Bel gratis via ' . $this->base_phone_display, $this->base_phone_tel, 'popup', 'primary')); ?>
-                        <?php echo wp_kses_post($this->button('popup_whatsapp', 'Stuur WhatsApp', $this->whatsapp_url($wa_text), 'popup', 'secondary')); ?>
-                        <?php echo wp_kses_post($this->button('popup_betaalde_hulp', 'Laat Alexander het uitzoeken', $this->paid_help_url($paid_text), 'popup', 'tertiary')); ?>
-                    </div>
-                    <p class="avd-uber-small">Deze melding verschijnt beperkt: pas na tijd, scroll of exit-intent op desktop.</p>
+            <div id="avdctaiPopup" class="avd-uber-popup avdctai-popup" aria-hidden="true" data-avdctai-popup="1" data-avdctai-cta-context="<?php echo esc_attr($this->get_page_context()); ?>">
+                <div class="avd-uber-popup-backdrop" data-avdctai-popup-close="1"></div>
+                <div class="avd-uber-popup-box" role="dialog" aria-modal="true" aria-label="<?php esc_attr_e('Oproep tot actie', 'avd-cta-insights'); ?>">
+                    <button type="button" class="avd-uber-popup-close" data-avdctai-popup-close="1" aria-label="<?php esc_attr_e('Sluiten', 'avd-cta-insights'); ?>">×</button>
+
+                    <?php if ($values['title'] !== '') : ?>
+                        <h2><?php echo esc_html($values['title']); ?></h2>
+                    <?php endif; ?>
+
+                    <?php if ($values['text'] !== '') : ?>
+                        <p><?php echo esc_html($values['text']); ?></p>
+                    <?php endif; ?>
+
+                    <?php if ($values['label'] !== '' && $values['url'] !== '') : ?>
+                        <div class="avd-uber-button-column">
+                            <?php echo wp_kses_post($this->button('cta_click', $values['label'], $values['url'], 'popup', 'primary')); ?>
+                        </div>
+                    <?php endif; ?>
                 </div>
             </div>
             <?php
@@ -826,54 +465,28 @@ JS;
                 return '';
             }
 
-            $type = sanitize_key($type);
-            $source = sanitize_key($source);
-            $style = sanitize_key($style);
-
             return sprintf(
-                '<a class="avd-uber-btn avd-uber-btn-%5$s avd-cta-button" href="%1$s" data-avd-cta="1" data-avd-cta-type="%2$s" data-avd-cta-source="%3$s" rel="nofollow">%4$s</a>',
+                '<a class="avd-uber-btn avd-uber-btn-%5$s avd-cta-button" href="%1$s" data-avdctai-cta="1" data-avdctai-cta-type="%2$s" data-avdctai-cta-source="%3$s" rel="nofollow">%4$s</a>',
                 esc_url($href),
-                esc_attr($type),
-                esc_attr($source),
+                esc_attr(sanitize_key($type)),
+                esc_attr(sanitize_key($source)),
                 esc_html($label),
-                esc_attr($style)
+                esc_attr(sanitize_key($style))
             );
         }
 
-        private function legacy_button($type, $label, $href, $source, $legacy_class = 'vraag') {
+        private function legacy_button($type, $label, $href, $source, $legacy_class = 'primary') {
             if (!$href || !$label) {
                 return '';
             }
 
-            $type = sanitize_key($type);
-            $source = sanitize_key($source);
-            $legacy_class = sanitize_html_class($legacy_class);
-
             return sprintf(
-                '<a href="%1$s" class="avd-cta-button %2$s" data-avd-cta="1" data-avd-cta-type="%3$s" data-avd-cta-source="%4$s" rel="nofollow">%5$s</a>',
+                '<a href="%1$s" class="avd-cta-button %2$s" data-avdctai-cta="1" data-avdctai-cta-type="%3$s" data-avdctai-cta-source="%4$s" rel="nofollow">%5$s</a>',
                 esc_url($href),
-                esc_attr($legacy_class),
-                esc_attr($type),
-                esc_attr($source),
+                esc_attr(sanitize_html_class($legacy_class)),
+                esc_attr(sanitize_key($type)),
+                esc_attr(sanitize_key($source)),
                 esc_html($label)
-            );
-        }
-
-        private function choice($type, $title, $text, $href, $source) {
-            if (!$href || !$title) {
-                return '';
-            }
-
-            $type = sanitize_key($type);
-            $source = sanitize_key($source);
-
-            return sprintf(
-                '<a class="avd-uber-choice avd-cta-button" href="%1$s" data-avd-cta="1" data-avd-cta-type="%2$s" data-avd-cta-source="%3$s" rel="nofollow"><strong>%4$s</strong><span>%5$s</span></a>',
-                esc_url($href),
-                esc_attr($type),
-                esc_attr($source),
-                esc_html($title),
-                esc_html($text)
             );
         }
 
@@ -882,56 +495,17 @@ JS;
                 return '';
             }
 
-            if (!$text) {
+            if ($text === '') {
                 $text = sanitize_text_field((string) $this->setting('whatsapp_default_message', ''));
             }
 
             $url = 'https://wa.me/' . $this->whatsapp_number;
 
-            if ($text) {
+            if ($text !== '') {
                 $url .= '?text=' . rawurlencode($text);
             }
 
             return $url;
-        }
-
-        private function paid_help_url($text = '') {
-            $text = $text ? $text : 'Hoi Alexander, ik wil graag betaalde hulp aanvragen.';
-            return $this->whatsapp_url($text);
-        }
-
-        private function page_subject($fallback = 'dit bedrijf') {
-            $title = wp_strip_all_tags(get_the_title());
-            if (!$title) {
-                return $fallback;
-            }
-
-            $title = html_entity_decode($title, ENT_QUOTES, get_bloginfo('charset'));
-            $parts = preg_split('/\s[-|–—]\s/u', $title);
-            if (!empty($parts[0])) {
-                $title = trim($parts[0]);
-            }
-
-            $replace = array(
-                'Telefoon bellen?' => '',
-                'Telefoon bellen' => '',
-                'telefoon bellen?' => '',
-                'telefoon bellen' => '',
-                'Klantenservice bellen?' => '',
-                'klantenservice bellen?' => '',
-                'Klantenservice en contactinformatie' => '',
-                'Telefoonnummers en contactinformatie' => '',
-                'Pechhulp en contactinformatie' => '',
-                'bellen?' => '',
-                'Bellen?' => '',
-                'bellen' => '',
-                'Bellen' => '',
-            );
-
-            $title = str_replace(array_keys($replace), array_values($replace), $title);
-            $title = trim(preg_replace('/\s+/', ' ', $title));
-
-            return $title ? $title : $fallback;
         }
 
         public function track_event() {
@@ -1010,203 +584,6 @@ JS;
         }
 
 
-        public function register_lead_post_type() {
-            register_post_type(self::LEAD_POST_TYPE, array(
-                'labels' => array(
-                    'name' => 'Bedrijfsscan leads',
-                    'singular_name' => 'Bedrijfsscan lead',
-                    'menu_name' => 'Bedrijfsscan leads',
-                    'add_new_item' => 'Nieuwe lead toevoegen',
-                    'edit_item' => 'Lead bekijken',
-                    'view_item' => 'Lead bekijken',
-                    'search_items' => 'Leads zoeken',
-                ),
-                'public' => false,
-                'show_ui' => true,
-                'show_in_menu' => 'avd-cta-insights',
-                'capability_type' => 'post',
-                'supports' => array('title', 'editor'),
-                'menu_icon' => 'dashicons-businessperson',
-            ));
-        }
-
-        public function shortcode_bedrijfsscan_form($atts = array()) {
-            $result = filter_input(
-    INPUT_GET,
-    'avdctai_business_scan',
-    FILTER_SANITIZE_FULL_SPECIAL_CHARS
-);
-
-$result = is_string($result) ? sanitize_key($result) : '';
-
-$success = $result === 'bedankt';
-$error = $result === 'fout';
-            $action = esc_url(admin_url('admin-post.php'));
-            $current = esc_url_raw($this->current_url());
-            ob_start();
-            ?>
-            <div class="avd-scan-form-wrap">
-                <?php if ($success) : ?>
-                    <div class="avd-scan-message avd-scan-success"><strong>Bedankt!</strong> Je aanvraag is ontvangen. Ik neem zo snel mogelijk contact met je op.</div>
-                <?php elseif ($error) : ?>
-                    <div class="avd-scan-message avd-scan-error"><strong>Niet gelukt.</strong> Controleer de verplichte velden en probeer het opnieuw.</div>
-                <?php endif; ?>
-                <form class="avd-scan-form" method="post" action="<?php echo esc_url($action); ?>">
-                    <input type="hidden" name="action" value="avdctai_business_scan_submit">
-                    <input type="hidden" name="avdctai_return_url" value="<?php echo esc_attr($current); ?>">
-                    <?php wp_nonce_field('avdctai_business_scan_submit', 'avdctai_business_scan_nonce'); ?>
-                    <div class="avd-scan-hp" aria-hidden="true"><label>Website<input type="text" name="avdctai_website_check" tabindex="-1" autocomplete="off"></label></div>
-
-                    <div class="avd-scan-grid">
-                        <label>Naam *<input type="text" name="naam" required autocomplete="name"></label>
-                        <label>Bedrijfsnaam *<input type="text" name="bedrijf" required autocomplete="organization"></label>
-                        <label>E-mailadres *<input type="email" name="email" required autocomplete="email"></label>
-                        <label>Telefoonnummer *<input type="tel" name="telefoon" required autocomplete="tel"></label>
-                        <label class="avd-scan-full">Website<input type="url" name="website" placeholder="https://" autocomplete="url"></label>
-                    </div>
-
-                    <fieldset class="avd-scan-fieldset">
-                        <legend>Wat wil je verbeteren? *</legend>
-                        <label><input type="checkbox" name="verbeteren[]" value="Betere bereikbaarheid"> Betere bereikbaarheid</label>
-                        <label><input type="checkbox" name="verbeteren[]" value="Meer leads"> Meer leads</label>
-                        <label><input type="checkbox" name="verbeteren[]" value="AI inzetten"> AI inzetten</label>
-                        <label><input type="checkbox" name="verbeteren[]" value="Minder administratie"> Minder administratie</label>
-                        <label><input type="checkbox" name="verbeteren[]" value="Minder telefoondruk"> Minder telefoondruk</label>
-                        <label><input type="checkbox" name="verbeteren[]" value="Kosten besparen"> Kosten besparen</label>
-                    </fieldset>
-
-                    <label class="avd-scan-full">Korte toelichting<textarea name="toelichting" rows="5" placeholder="Waar loop je nu tegenaan?"></textarea></label>
-
-                    <button class="avd-scan-submit avd-cta-button" type="submit" data-avd-cta="1" data-avd-cta-type="bedrijfsscan" data-avd-cta-source="bedrijfsscan_form">Vraag gratis bedrijfsscan aan</button>
-                    <p class="avd-scan-privacy">Geen spam. Geen verplichtingen. Je aanvraag wordt opgeslagen in WordPress onder Bedrijfsscan leads.</p>
-                </form>
-            </div>
-            <?php
-            return trim(ob_get_clean());
-        }
-
-        public function handle_bedrijfsscan_submit() {
-            $return = isset($_POST['avdctai_return_url']) ? esc_url_raw(wp_unslash($_POST['avdctai_return_url'])) : home_url('/gratis-bedrijfsscan/');
-            $return = remove_query_arg('avdctai_business_scan', $return);
-
-            if (!isset($_POST['avdctai_business_scan_nonce']) || !wp_verify_nonce(sanitize_text_field(wp_unslash($_POST['avdctai_business_scan_nonce'])), 'avdctai_business_scan_submit')) {
-                wp_safe_redirect(add_query_arg('avdctai_business_scan', 'fout', $return) . '#aanvragen'); exit;
-            }
-            if (!empty($_POST['avdctai_website_check'])) {
-                wp_safe_redirect(add_query_arg('avdctai_business_scan', 'bedankt', $return) . '#aanvragen'); exit;
-            }
-
-            $naam = isset($_POST['naam']) ? sanitize_text_field(wp_unslash($_POST['naam'])) : '';
-            $bedrijf = isset($_POST['bedrijf']) ? sanitize_text_field(wp_unslash($_POST['bedrijf'])) : '';
-            $email = isset($_POST['email']) ? sanitize_email(wp_unslash($_POST['email'])) : '';
-            $telefoon = isset($_POST['telefoon']) ? sanitize_text_field(wp_unslash($_POST['telefoon'])) : '';
-            $website = isset($_POST['website']) ? esc_url_raw(wp_unslash($_POST['website'])) : '';
-            $toelichting = isset($_POST['toelichting']) ? sanitize_textarea_field(wp_unslash($_POST['toelichting'])) : '';
-            $verbeteren_input = filter_input(
-    INPUT_POST,
-    'verbeteren',
-    FILTER_DEFAULT,
-    FILTER_REQUIRE_ARRAY
-);
-
-$verbeteren = array();
-
-if (is_array($verbeteren_input)) {
-    foreach ($verbeteren_input as $item) {
-        if (!is_scalar($item)) {
-            continue;
-        }
-
-        $clean_item = sanitize_text_field((string) $item);
-
-        if ($clean_item !== '') {
-            $verbeteren[] = $clean_item;
-        }
-    }
-}
-            if (!$naam || !$bedrijf || !$email || !$telefoon || empty($verbeteren)) {
-                wp_safe_redirect(add_query_arg('avdctai_business_scan', 'fout', $return) . '#aanvragen'); exit;
-            }
-
-            $content = "Naam: {$naam}\nBedrijf: {$bedrijf}\nE-mail: {$email}\nTelefoon: {$telefoon}\nWebsite: {$website}\nVerbeteren: " . implode(', ', $verbeteren) . "\n\nToelichting:\n{$toelichting}";
-            $lead_id = wp_insert_post(array(
-                'post_type' => self::LEAD_POST_TYPE,
-                'post_status' => 'publish',
-                'post_title' => $bedrijf . ' - ' . $naam,
-                'post_content' => $content,
-                'meta_input' => array(
-                    '_avdctai_lead_status' => 'Nieuw',
-                    '_avdctai_naam' => $naam,
-                    '_avdctai_bedrijf' => $bedrijf,
-                    '_avdctai_email' => $email,
-                    '_avdctai_telefoon' => $telefoon,
-                    '_avdctai_website' => $website,
-                    '_avdctai_verbeteren' => implode(', ', $verbeteren),
-                    '_avdctai_toelichting' => $toelichting,
-                    '_avdctai_page_url' => $return,
-                    '_avdctai_ip_hash' => $this->ip_hash(),
-                    '_avdctai_user_agent_hash' => $this->ua_hash(),
-                ),
-            ));
-
-            if ($lead_id && !is_wp_error($lead_id)) {
-                $this->store_event(array(
-                    'time' => current_time('mysql'),
-                    'timestamp' => time(),
-                    'type' => 'bedrijfsscan',
-                    'source' => 'bedrijfsscan_form_submit',
-                    'context' => 'landing',
-                    'device' => 'unknown',
-                    'page_url' => $return,
-                    'target_url' => '',
-                    'label' => $bedrijf,
-                    'session_id' => '',
-                    'ip_hash' => $this->ip_hash(),
-                    'user_agent_hash' => $this->ua_hash(),
-                ));
-                $to = get_option('admin_email');
-                $subject = 'Nieuwe gratis bedrijfsscan aanvraag: ' . $bedrijf;
-                $message = $content . "\n\nBekijk in WordPress: " . admin_url('post.php?post=' . $lead_id . '&action=edit');
-                wp_mail($to, $subject, $message, array('Reply-To: ' . $naam . ' <' . $email . '>'));
-                wp_safe_redirect(add_query_arg('avdctai_business_scan', 'bedankt', $return) . '#aanvragen'); exit;
-            }
-
-            wp_safe_redirect(add_query_arg('avdctai_business_scan', 'fout', $return) . '#aanvragen'); exit;
-        }
-
-        public function lead_columns($columns) {
-            return array(
-                'cb' => isset($columns['cb']) ? $columns['cb'] : '<input type="checkbox" />',
-                'title' => 'Lead',
-                'status' => 'Status',
-                'email' => 'E-mail',
-                'telefoon' => 'Telefoon',
-                'verbeteren' => 'Interesse',
-                'date' => 'Datum',
-            );
-        }
-
-        public function lead_column_content($column, $post_id) {
-            if ($column === 'status') { echo esc_html(get_post_meta($post_id, '_avdctai_lead_status', true) ?: 'Nieuw'); }
-            if ($column === 'email') {
-                $email = sanitize_email(get_post_meta($post_id, '_avdctai_email', true));
-
-                if ($email) {
-                    echo wp_kses_post(
-                        sprintf(
-                            '<a href="%1$s">%2$s</a>',
-                            esc_url('mailto:' . $email),
-                            esc_html($email)
-                        )
-                    );
-                }
-            }
-            if ($column === 'telefoon') { echo esc_html(get_post_meta($post_id, '_avdctai_telefoon', true)); }
-            if ($column === 'verbeteren') { echo esc_html(get_post_meta($post_id, '_avdctai_verbeteren', true)); }
-        }
-
-
-
         public function register_rest_routes() {
             register_rest_route('avdctai/v1', '/stats', array(
                 'methods' => 'GET',
@@ -1234,8 +611,8 @@ if (is_array($verbeteren_input)) {
             $json_url = rest_url('avdctai/v1/stats?key=' . rawurlencode($this->api_key()));
             ?>
             <div class="wrap">
-                <h1>AVD AI Analyse</h1>
-                <p><strong>Versie <?php echo esc_html(self::VERSION); ?>:</strong> AI Briefing met websitecijfers, nieuwe leads, open leads en acties voor vandaag.</p>
+                <h1><?php esc_html_e('AVD CTA Insights-analyse', 'avd-cta-insights'); ?></h1>
+                <p><strong>Versie <?php echo esc_html(self::VERSION); ?>:</strong> Analyse met websitecijfers, CTA-prestaties en concrete aandachtspunten.</p>
                 <p><strong>Publieke JSON-link:</strong><br><input type="text" readonly value="<?php echo esc_attr($json_url); ?>" style="width:100%;max-width:900px;"></p>
                 <p><button class="button button-primary" id="avd-copy-ai-export">📋 Kopieer AI Briefing voor ChatGPT</button></p>
                 <textarea id="avd-ai-export" readonly style="width:100%;min-height:460px;font-family:monospace;"><?php echo esc_textarea($export); ?></textarea>
@@ -1330,7 +707,7 @@ if (is_array($verbeteren_input)) {
                 elseif ($type === 'engaged_session') { if ($sid) { $engaged[$sid] = true; } }
                 elseif (strpos($type, 'popup') === 0) { $popup++; }
 
-                if (in_array($type, array('aanvraag','application','claim','form_submit','bedrijfsscan'), true)) { $applications++; }
+                if (in_array($type, array('application', 'form_submit', 'lead_submit'), true)) { $applications++; }
                 if ($this->is_real_cta_event($type)) { $cta++; }
 
                 if (!empty($event['user_agent_hash'])) { $bot_count++; }
@@ -1414,14 +791,11 @@ if (is_array($verbeteren_input)) {
                 strpos($type, 'cta') !== false ||
                 strpos($type, 'click') !== false ||
                 strpos($type, 'call') !== false ||
-                strpos($type, 'bel') !== false ||
                 strpos($type, 'whatsapp') !== false ||
                 strpos($type, 'mail') !== false ||
                 strpos($type, 'lead') !== false ||
                 strpos($type, 'form_submit') !== false ||
-                strpos($type, 'bedrijfsscan') !== false ||
-                strpos($type, 'claim') !== false ||
-                strpos($type, 'aanvraag') !== false
+                strpos($type, 'submit') !== false
             );
         }
 
@@ -1432,135 +806,62 @@ if (is_array($verbeteren_input)) {
             return ($pct > 0 ? '+' : '') . $pct . '%';
         }
 
-        private function get_lead_briefing_data() {
-            $all = get_posts(array(
-                'post_type' => self::LEAD_POST_TYPE,
-                'post_status' => array('publish', 'draft', 'pending', 'private'),
-                'numberposts' => 50,
-                'orderby' => 'date',
-                'order' => 'DESC',
-            ));
+        private function build_chatgpt_export($payload) {
+            $today = $payload['today'];
+            $yesterday = $payload['yesterday'];
+            $week = $payload['week'];
+            $previous_week = $payload['previous_week'];
 
-            $now = current_time('timestamp');
-            $new_leads = array();
-            $open_leads = array();
-            $status_counts = array();
-            $expected_total = 0;
-            $won_total = 0;
+            $out = "=== AVD CTA INSIGHTS BRIEFING ===\n";
+            $out .= 'Versie: ' . self::VERSION . "\n";
+            $out .= 'Site: ' . home_url('/') . "\n";
+            $out .= 'Gegenereerd: ' . current_time('c') . "\n\n";
 
-            foreach ($all as $post) {
-                $status = get_post_meta($post->ID, '_avdctai_lead_status', true);
-                if (!$status) { $status = 'Nieuw'; }
-                $status_counts[$status] = isset($status_counts[$status]) ? $status_counts[$status] + 1 : 1;
-
-                $expected = (float) str_replace(',', '.', preg_replace('/[^0-9,\.]/', '', (string) get_post_meta($post->ID, '_avdctai_expected_revenue', true)));
-                $won = (float) str_replace(',', '.', preg_replace('/[^0-9,\.]/', '', (string) get_post_meta($post->ID, '_avdctai_actual_revenue', true)));
-                $expected_total += $expected;
-                $won_total += $won;
-
-                $item = array(
-                    'id' => $post->ID,
-                    'date' => get_date_from_gmt(get_gmt_from_date($post->post_date), 'Y-m-d H:i'),
-                    'title' => get_the_title($post),
-                    'status' => $status,
-                    'naam' => get_post_meta($post->ID, '_avdctai_naam', true),
-                    'bedrijf' => get_post_meta($post->ID, '_avdctai_bedrijf', true),
-                    'email' => get_post_meta($post->ID, '_avdctai_email', true),
-                    'telefoon' => get_post_meta($post->ID, '_avdctai_telefoon', true),
-                    'website' => get_post_meta($post->ID, '_avdctai_website', true),
-                    'interesse' => get_post_meta($post->ID, '_avdctai_verbeteren', true),
-                    'pagina' => get_post_meta($post->ID, '_avdctai_page_url', true),
-                    'expected' => $expected,
-                    'won' => $won,
-                    'edit_url' => admin_url('post.php?post=' . $post->ID . '&action=edit'),
-                );
-
-                $created = strtotime($post->post_date);
-                if ($created && ($now - $created) <= DAY_IN_SECONDS) {
-                    $new_leads[] = $item;
-                }
-
-                if (!in_array(strtolower($status), array('gewonnen', 'betaald', 'verloren', 'afgewezen'), true)) {
-                    $open_leads[] = $item;
-                }
+            $out .= "=== VANDAAG ===\n";
+            foreach (array('views', 'sessions', 'engaged_sessions', 'cta', 'conversion_views', 'conversion_sessions', 'popup_events', 'applications') as $key) {
+                $old_value = isset($yesterday[$key]) ? $yesterday[$key] : 0;
+                $out .= ucfirst(str_replace('_', ' ', $key)) . ': ' . $today[$key] . ' (' . $this->pct_change($today[$key], $old_value) . ")\n";
             }
 
-            return array(
-                'total' => count($all),
-                'new' => $new_leads,
-                'open' => $open_leads,
-                'status_counts' => $status_counts,
-                'expected_total' => $expected_total,
-                'won_total' => $won_total,
-            );
-        }
-
-        private function build_chatgpt_export($p) {
-            $t = $p['today']; $y = $p['yesterday']; $w = $p['week']; $pw = $p['previous_week'];
-            $leads = $this->get_lead_briefing_data();
-
-            $out = "=== AVD AI BRIEFING ===\n";
-            $out .= "Versie: " . self::VERSION . "\n";
-            $out .= "Site: AlexandervanDijl.nl\n";
-            $out .= "Doel: break-even voor 31 augustus. Prioriteer acties met snelste kans op omzet of leads.\n\n";
-
-            $out .= "=== LEADS EN OMZET ===\n";
-            $out .= "Nieuwe leads laatste 24 uur: " . count($leads['new']) . "\n";
-            $out .= "Open leads: " . count($leads['open']) . "\n";
-            $out .= "Totaal leads zichtbaar: " . $leads['total'] . "\n";
-            $out .= "Verwachte omzet: €" . number_format($leads['expected_total'], 2, ',', '.') . "\n";
-            $out .= "Werkelijke/gewonnen omzet: €" . number_format($leads['won_total'], 2, ',', '.') . "\n";
-            if (!empty($leads['status_counts'])) {
-                $out .= "Leadstatussen:\n";
-                foreach ($leads['status_counts'] as $status => $count) {
-                    $out .= "- {$status}: {$count}\n";
-                }
+            $out .= "\n=== DEZE WEEK ===\n";
+            foreach (array('views', 'sessions', 'engaged_sessions', 'cta', 'conversion_views', 'conversion_sessions', 'popup_events', 'applications') as $key) {
+                $old_value = isset($previous_week[$key]) ? $previous_week[$key] : 0;
+                $out .= ucfirst(str_replace('_', ' ', $key)) . ': ' . $week[$key] . ' (' . $this->pct_change($week[$key], $old_value) . ")\n";
             }
 
-            $out .= "\n=== NIEUWE LEADS ===\n";
-            if (empty($leads['new'])) {
-                $out .= "Geen nieuwe leads in de laatste 24 uur.\n";
+            $out .= "\n=== TOPPAGINA'S ===\n";
+            if (empty($payload['top_pages'])) {
+                $out .= "Nog geen paginagegevens beschikbaar.\n";
             } else {
-                foreach (array_slice($leads['new'], 0, 10) as $lead) {
-                    $out .= "- {$lead['bedrijf']} / {$lead['naam']} | Status: {$lead['status']} | Interesse: {$lead['interesse']} | Tel: {$lead['telefoon']} | E-mail: {$lead['email']} | Website: {$lead['website']} | Pagina: {$lead['pagina']} | Bewerken: {$lead['edit_url']}\n";
+                foreach ($payload['top_pages'] as $page) {
+                    $out .= sprintf(
+                        "- %s: %d weergaven, %d CTA-acties, %s%% conversie\n",
+                        $page['page'],
+                        $page['views'],
+                        $page['cta'],
+                        $page['conversion']
+                    );
                 }
             }
 
-            $out .= "\n=== OPEN LEADS ===\n";
-            if (empty($leads['open'])) {
-                $out .= "Geen open leads.\n";
+            $out .= "\n=== PAGINA'S DIE AANDACHT VRAGEN ===\n";
+            if (empty($payload['needs_attention'])) {
+                $out .= "Nog geen gegevens beschikbaar.\n";
             } else {
-                foreach (array_slice($leads['open'], 0, 10) as $lead) {
-                    $out .= "- {$lead['bedrijf']} / {$lead['naam']} | Status: {$lead['status']} | Interesse: {$lead['interesse']} | Verwacht: €" . number_format($lead['expected'], 2, ',', '.') . " | Actie: opvolgen | Bewerken: {$lead['edit_url']}\n";
+                foreach ($payload['needs_attention'] as $page) {
+                    $out .= sprintf(
+                        "- %s: %d weergaven, %d CTA-acties, prioriteitsscore %d\n",
+                        $page['page'],
+                        $page['views'],
+                        $page['cta'],
+                        $page['score']
+                    );
                 }
             }
 
-            $out .= "\n=== WEBSITE VANDAAG ===\n";
-            foreach (array('views','sessions','engaged_sessions','cta','conversion_views','conversion_sessions','popup_events','applications','bot_score') as $k) {
-                $out .= ucfirst(str_replace('_',' ', $k)) . ': ' . $t[$k] . ' (' . $this->pct_change($t[$k], isset($y[$k]) ? $y[$k] : 0) . ")\n";
-            }
-
-            $out .= "\n=== WEBSITE DEZE WEEK ===\n";
-            foreach (array('views','sessions','engaged_sessions','cta','conversion_views','conversion_sessions','popup_events','applications') as $k) {
-                $out .= ucfirst(str_replace('_',' ', $k)) . ': ' . $w[$k] . ' (' . $this->pct_change($w[$k], isset($pw[$k]) ? $pw[$k] : 0) . ")\n";
-            }
-
-            $out .= "\n=== TOP PAGINA'S ===\n";
-            foreach ($p['top_pages'] as $page) {
-                $out .= "- {$page['page']}: {$page['views']} views, {$page['cta']} CTA, {$page['conversion']}%, score {$page['score']}\n";
-            }
-
-            $out .= "\n=== PAGINA'S MET HOOGSTE PRIORITEIT ===\n";
-            foreach ($p['needs_attention'] as $page) {
-                $out .= "- {$page['page']}: {$page['views']} views, {$page['cta']} CTA, {$page['conversion']}%, AI Priority Score {$page['score']}\n";
-            }
-
-            $out .= "\n=== GEVRAAGD AAN CHATGPT ===\n";
-            $out .= "1. Welke leads moet ik als eerste opvolgen?\n";
-            $out .= "2. Welke pagina moet vandaag als eerste worden verbeterd?\n";
-            $out .= "3. Welke CTA of funnel heeft de snelste kans op omzet?\n";
-            $out .= "4. Geef een concreet actieplan voor vandaag.\n";
-            $out .= "=== EINDE AVD AI BRIEFING ===\n";
+            $out .= "\n=== ANALYSEVRAAG ===\n";
+            $out .= "Analyseer de prestaties, benoem opvallende veranderingen en geef drie concrete verbeteracties voor CTA's en pagina's.\n";
+            $out .= "=== EINDE BRIEFING ===\n";
 
             return $out;
         }

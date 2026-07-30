@@ -3,7 +3,7 @@
  * Plugin Name: AVD CTA Insights
  * Plugin URI: https://alexandervandijl.nl/avd-cta-insights/
  * Description: Meet CTA-kliks, analyseer bezoekersgedrag en ontvang concrete optimalisatievoorstellen voor WordPress.
- * Version: 4.0.0.13
+ * Version: 4.0.0.14
  * Requires at least: 6.4
  * Requires PHP: 8.0
  * Author: Alexander van Dijl
@@ -23,19 +23,20 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-loader.php';
 if (!class_exists('AVDCTAI_Plugin')) {
 
     final class AVDCTAI_Plugin {
-        const VERSION = '4.0.0.13';
+        const VERSION = '4.0.0.14';
         const AJAX_ACTION = 'avdctai_event';
         const OPTION_RECENT_EVENTS = 'avdctai_events_recent';
         const OPTION_API_KEY = 'avdctai_api_key';
+        const OPTION_SETTINGS = 'avdctai_settings';
         const LEAD_POST_TYPE = 'avdctai_scan_lead';
 
         private static $instance = null;
         private static $content_cta_injected = false;
 
-        private $base_phone_display = '020 262 1789';
-        private $base_phone_international_display = '+31 20 262 1789';
-        private $base_phone_tel = 'tel:+31202621789';
-        private $whatsapp_number = '31645430985';
+        private $base_phone_display = '';
+        private $base_phone_international_display = '';
+        private $base_phone_tel = '';
+        private $whatsapp_number = '';
 
         public static function instance() {
             if (self::$instance === null) {
@@ -43,6 +44,77 @@ if (!class_exists('AVDCTAI_Plugin')) {
             }
 
             return self::$instance;
+        }
+
+        /**
+         * Return the plugin settings merged with safe defaults.
+         *
+         * Visual CTA elements are disabled by default so installing this plugin
+         * never places another website's phone number, WhatsApp link or marketing
+         * content on the frontend.
+         *
+         * @return array
+         */
+        public function get_settings() {
+            $defaults = array(
+                'tracking_enabled'          => 1,
+                'track_page_views'          => 1,
+                'content_cta_enabled'       => 0,
+                'sticky_bar_enabled'        => 0,
+                'popup_enabled'             => 0,
+                'phone_display'             => '',
+                'phone_international'       => '',
+                'phone_tel'                 => '',
+                'whatsapp_number'           => '',
+                'cta_title'                 => '',
+                'cta_text'                  => '',
+                'cta_button_label'          => '',
+                'cta_button_url'            => '',
+                'whatsapp_default_message'  => '',
+            );
+
+            $settings = get_option(self::OPTION_SETTINGS, array());
+
+            if (!is_array($settings)) {
+                $settings = array();
+            }
+
+            return wp_parse_args($settings, $defaults);
+        }
+
+        /**
+         * Read one plugin setting.
+         *
+         * @param string $key     Setting key.
+         * @param mixed  $default Fallback value.
+         * @return mixed
+         */
+        private function setting($key, $default = '') {
+            $settings = $this->get_settings();
+
+            return array_key_exists($key, $settings) ? $settings[$key] : $default;
+        }
+
+        /**
+         * Check whether a boolean plugin setting is enabled.
+         *
+         * @param string $key Setting key.
+         * @return bool
+         */
+        private function setting_enabled($key) {
+            return (bool) absint($this->setting($key, 0));
+        }
+
+        /**
+         * Load runtime contact values from the saved plugin settings.
+         *
+         * @return void
+         */
+        private function load_runtime_settings() {
+            $this->base_phone_display = sanitize_text_field((string) $this->setting('phone_display', ''));
+            $this->base_phone_international_display = sanitize_text_field((string) $this->setting('phone_international', ''));
+            $this->base_phone_tel = esc_url_raw((string) $this->setting('phone_tel', ''));
+            $this->whatsapp_number = preg_replace('/[^0-9]/', '', (string) $this->setting('whatsapp_number', ''));
         }
 
        private function __construct() {
@@ -72,6 +144,15 @@ if (!class_exists('AVDCTAI_Plugin')) {
         return;
     }
 
+    $tracking_enabled = $this->setting_enabled('tracking_enabled');
+    $visual_enabled = $this->setting_enabled('content_cta_enabled')
+        || $this->setting_enabled('sticky_bar_enabled')
+        || $this->setting_enabled('popup_enabled');
+
+    if (!$tracking_enabled && !$visual_enabled) {
+        return;
+    }
+
     wp_register_style('avd-cta-insights-style', '', array(), self::VERSION);
     wp_enqueue_style('avd-cta-insights-style');
     wp_add_inline_style('avd-cta-insights-style', $this->get_css());
@@ -94,7 +175,7 @@ if (!class_exists('AVDCTAI_Plugin')) {
             'pageUrl'      => esc_url_raw($this->current_url()),
             'pageType'     => $this->get_page_context(),
             'popupEnabled' => $this->popup_allowed() ? 1 : 0,
-            'trackViews'   => 1,
+            'trackViews'   => ($this->setting_enabled('tracking_enabled') && $this->setting_enabled('track_page_views')) ? 1 : 0,
         )
     );
 }
@@ -156,6 +237,10 @@ JS;
             );
         }
         public function inject_content_cta($content) {
+            if (!$this->setting_enabled('content_cta_enabled')) {
+                return $content;
+            }
+
             if (is_admin() || is_feed() || wp_doing_ajax()) {
                 return $content;
             }
@@ -198,6 +283,10 @@ JS;
         }
 
         public function shortcode_cta($atts = array()) {
+            if (!$this->setting_enabled('content_cta_enabled')) {
+                return '';
+            }
+
             $atts = shortcode_atts(array(
                 'type' => '',
                 'source' => 'shortcode',
@@ -212,6 +301,10 @@ JS;
         }
 
         public function shortcode_paid_help($atts = array()) {
+            if (!$this->setting_enabled('content_cta_enabled')) {
+                return '';
+            }
+
             return $this->paid_help_block('shortcode_betaalde_hulp');
         }
 
@@ -610,6 +703,10 @@ JS;
         }
 
         public function render_sticky_bar() {
+            if (!$this->setting_enabled('sticky_bar_enabled')) {
+                return;
+            }
+
             if (is_admin() || is_feed() || wp_doing_ajax() || $this->is_pixelverification()) {
                 return;
             }
@@ -725,6 +822,10 @@ JS;
         }
 
         private function button($type, $label, $href, $source, $style = 'primary') {
+            if (!$href || !$label) {
+                return '';
+            }
+
             $type = sanitize_key($type);
             $source = sanitize_key($source);
             $style = sanitize_key($style);
@@ -740,6 +841,10 @@ JS;
         }
 
         private function legacy_button($type, $label, $href, $source, $legacy_class = 'vraag') {
+            if (!$href || !$label) {
+                return '';
+            }
+
             $type = sanitize_key($type);
             $source = sanitize_key($source);
             $legacy_class = sanitize_html_class($legacy_class);
@@ -755,6 +860,10 @@ JS;
         }
 
         private function choice($type, $title, $text, $href, $source) {
+            if (!$href || !$title) {
+                return '';
+            }
+
             $type = sanitize_key($type);
             $source = sanitize_key($source);
 
@@ -769,8 +878,21 @@ JS;
         }
 
         private function whatsapp_url($text = '') {
-            $text = $text ? $text : 'Hoi Alexander, ik heb een vraag via AlexandervanDijl.nl.';
-            return 'https://wa.me/' . $this->whatsapp_number . '?text=' . rawurlencode($text);
+            if (!$this->whatsapp_number) {
+                return '';
+            }
+
+            if (!$text) {
+                $text = sanitize_text_field((string) $this->setting('whatsapp_default_message', ''));
+            }
+
+            $url = 'https://wa.me/' . $this->whatsapp_number;
+
+            if ($text) {
+                $url .= '?text=' . rawurlencode($text);
+            }
+
+            return $url;
         }
 
         private function paid_help_url($text = '') {
@@ -813,6 +935,10 @@ JS;
         }
 
         public function track_event() {
+    if (!$this->setting_enabled('tracking_enabled')) {
+        wp_send_json_error(array('stored' => false, 'reason' => 'tracking_disabled'), 403);
+    }
+
     check_ajax_referer('avdctai_event', 'nonce');
 
     $event = array(
@@ -1440,6 +1566,10 @@ if (is_array($verbeteren_input)) {
         }
 
         private function popup_allowed() {
+            if (!$this->setting_enabled('popup_enabled')) {
+                return false;
+            }
+
             if (is_admin() || is_feed() || wp_doing_ajax() || $this->is_pixelverification()) {
                 return false;
             }

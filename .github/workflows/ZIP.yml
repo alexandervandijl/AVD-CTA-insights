@@ -1,0 +1,152 @@
+name: Build AVD CTA plugin
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+
+# Deze workflow mag uitsluitend lezen.
+# Hij kan niets naar WordPress, FTP of de repository terugschrijven.
+permissions:
+  contents: read
+
+concurrency:
+  group: avd-cta-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-plugin:
+    name: Controleer en bouw plugin-ZIP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repository ophalen
+        uses: actions/checkout@v4
+
+      - name: PHP instellen
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          tools: none
+          coverage: none
+
+      - name: PHP-syntaxis controleren
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' php_files < <(
+            find . \
+              -type f \
+              -name '*.php' \
+              -not -path './vendor/*' \
+              -not -path './node_modules/*' \
+              -print0
+          )
+
+          if [ "${#php_files[@]}" -eq 0 ]; then
+            echo 'Geen PHP-bestanden gevonden.'
+            exit 1
+          fi
+
+          for php_file in "${php_files[@]}"; do
+            php -l "$php_file"
+          done
+
+      - name: Pluginmap en versie bepalen
+        id: plugin
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          main_file="$({
+            grep -RIl \
+              --include='*.php' \
+              --exclude-dir='.git' \
+              --exclude-dir='.github' \
+              --exclude-dir='vendor' \
+              --exclude-dir='node_modules' \
+              'Plugin Name:' . || true
+          } | head -n 1)"
+
+          if [ -z "$main_file" ]; then
+            echo 'Geen hoofdpluginbestand met "Plugin Name:" gevonden.'
+            exit 1
+          fi
+
+          main_file="${main_file#./}"
+          source_dir="$(dirname "$main_file")"
+
+          if [ "$source_dir" = '.' ]; then
+            plugin_slug="$(basename "$main_file" .php)"
+            source_dir='.'
+          else
+            plugin_slug="$(basename "$source_dir")"
+          fi
+
+          version="$({
+            sed -nE \
+              's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*([^[:space:]]+).*/\1/p' \
+              "$main_file"
+          } | head -n 1)"
+
+          if [ -z "$version" ]; then
+            echo 'Geen Version-header in het hoofdpluginbestand gevonden.'
+            exit 1
+          fi
+
+          safe_version="$(printf '%s' "$version" | tr -c 'A-Za-z0-9._-' '-')"
+          artifact_name="${plugin_slug}-${safe_version}"
+
+          echo "main_file=$main_file" >> "$GITHUB_OUTPUT"
+          echo "source_dir=$source_dir" >> "$GITHUB_OUTPUT"
+          echo "plugin_slug=$plugin_slug" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+
+          echo "Hoofdpluginbestand: $main_file"
+          echo "Pluginmap: $source_dir"
+          echo "Plugin-slug: $plugin_slug"
+          echo "Versie: $version"
+
+      - name: Installeerbare ZIP bouwen
+        shell: bash
+        env:
+          SOURCE_DIR: ${{ steps.plugin.outputs.source_dir }}
+          PLUGIN_SLUG: ${{ steps.plugin.outputs.plugin_slug }}
+          ARTIFACT_NAME: ${{ steps.plugin.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+
+          build_root="$RUNNER_TEMP/avd-cta-build"
+          package_dir="$build_root/$PLUGIN_SLUG"
+
+          rm -rf "$build_root"
+          mkdir -p "$package_dir"
+
+          rsync -a \
+            --exclude='.git/' \
+            --exclude='.github/' \
+            --exclude='node_modules/' \
+            --exclude='tests/' \
+            --exclude='*.zip' \
+            --exclude='.DS_Store' \
+            "$SOURCE_DIR/" "$package_dir/"
+
+          cd "$build_root"
+          zip -qr "$GITHUB_WORKSPACE/$ARTIFACT_NAME.zip" "$PLUGIN_SLUG"
+
+          test -s "$GITHUB_WORKSPACE/$ARTIFACT_NAME.zip"
+          unzip -l "$GITHUB_WORKSPACE/$ARTIFACT_NAME.zip"
+
+      - name: ZIP als GitHub Artifact bewaren
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.plugin.outputs.artifact_name }}
+          path: ${{ steps.plugin.outputs.artifact_name }}.zip
+          if-no-files-found: error
+          retention-days: 30

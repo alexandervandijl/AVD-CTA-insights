@@ -4,7 +4,7 @@ Tags: conversion, analytics, cta, marketing, optimization
 Requires at least: 6.4
 Tested up to: 7.0
 Requires PHP: 8.0
-Stable tag: 4.0.0.13
+Stable tag: 4.0.0.15
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,6 +53,12 @@ No. Tracking data is stored inside the WordPress installation.
 6. Live Events.
 
 == Changelog ==
+
+= 4.0.0.15 =
+* Made frontend tracking and dashboard integration more robust.
+* Removed hardcoded site-specific contact details from the default plugin configuration.
+* Added configurable CTA, phone and WhatsApp settings.
+* Improved dashboard, settings, asset loading and WordPress.org deployment compatibility.
 
 = 4.0.0.13 =
 * Eerste officiële release van AVD CTA Insights.

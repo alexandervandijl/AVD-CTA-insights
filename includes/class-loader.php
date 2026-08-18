@@ -25,6 +25,7 @@ final class AVDCTAI_Loader {
         /*
          * Services
          */
+        self::require_file($base_path . 'includes/services/class-event-archive.php');
         self::require_file($base_path . 'includes/services/class-stats.php');
         self::require_file($base_path . 'includes/services/class-priority.php');
         self::require_file($base_path . 'includes/services/class-ai-coach.php');
@@ -83,6 +84,7 @@ final class AVDCTAI_Loader {
          * dat gebeurt al vanuit AVDCTAI_Admin::__construct().
          */
         self::init_class('AVDCTAI_Installer');
+        self::init_class('AVDCTAI_Event_Archive');
         self::init_class('AVDCTAI_Admin');
         self::init_class('AVDCTAI_Leads');
         self::init_class('AVDCTAI_AI');

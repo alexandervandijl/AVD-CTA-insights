@@ -4,7 +4,7 @@ Tags: conversion, analytics, cta, marketing, optimization
 Requires at least: 6.4
 Tested up to: 7.0
 Requires PHP: 8.0
-Stable tag: 4.0.0.15
+Stable tag: 4.0.0.18
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,6 +53,13 @@ No. Tracking data is stored inside the WordPress installation.
 6. Live Events.
 
 == Changelog ==
+
+= 4.0.0.18 =
+* Fixed the admin tracking test after the AJAX action rename.
+* Added recovery for legacy AVD tracking data without deleting old options.
+* Added a durable event archive so statistics no longer disappear when the recent-event buffer reaches its limit.
+* Restored archived events in dashboard and AI statistics.
+
 
 = 4.0.0.15 =
 * Made frontend tracking and dashboard integration more robust.

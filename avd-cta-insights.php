@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AVD CTA Insights
  * Description: Meet CTA-kliks, analyseer bezoekersgedrag en ontvang concrete optimalisatievoorstellen voor WordPress.
- * Version: 4.0.0.15
+ * Version: 4.0.0.18
  * Requires at least: 6.4
  * Requires PHP: 8.0
  * Author: Alexander van Dijl
@@ -21,7 +21,7 @@ require_once plugin_dir_path(__FILE__) . 'includes/class-loader.php';
 if (!class_exists('AVDCTAI_Plugin')) {
 
     final class AVDCTAI_Plugin {
-        const VERSION = '4.0.0.15';
+        const VERSION = '4.0.0.18';
         const AJAX_ACTION = 'avdctai_event';
         const OPTION_RECENT_EVENTS = 'avdctai_events_recent';
         const OPTION_API_KEY = 'avdctai_api_key';

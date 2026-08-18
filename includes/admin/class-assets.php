@@ -56,31 +56,49 @@ final class AVDCTAI_Assets {
             AVDCTAI_Plugin::VERSION
         );
 
-        if (!in_array($page, self::DASHBOARD_SCRIPT_PAGES, true)) {
-            return;
+        if (in_array($page, self::DASHBOARD_SCRIPT_PAGES, true)) {
+            wp_enqueue_script(
+                'avd-cta-insights-dashboard',
+                plugins_url('../../assets/js/dashboard.js', __FILE__),
+                array(),
+                AVDCTAI_Plugin::VERSION,
+                true
+            );
+
+            wp_localize_script(
+                'avd-cta-insights-dashboard',
+                'AVDCTAIDashboard',
+                array(
+                    'ajaxUrl' => admin_url('admin-ajax.php'),
+                    'nonce'   => wp_create_nonce('avdctai_dashboard_stats'),
+                    'page'    => $page,
+                    'strings' => array(
+                        'loading' => __('Gegevens laden…', 'avd-cta-insights'),
+                        'error'   => __('De gegevens konden niet worden geladen.', 'avd-cta-insights'),
+                    ),
+                )
+            );
         }
 
-        wp_enqueue_script(
-            'avd-cta-insights-dashboard',
-            plugins_url('../../assets/js/dashboard.js', __FILE__),
-            array(),
-            AVDCTAI_Plugin::VERSION,
-            true
-        );
+        if ($page === 'avd-ai-analyse') {
+            wp_enqueue_script(
+                'avd-cta-insights-tracking-test',
+                plugins_url('../../assets/js/admin-tracking-test.js', __FILE__),
+                array(),
+                AVDCTAI_Plugin::VERSION,
+                true
+            );
 
-        wp_localize_script(
-            'avd-cta-insights-dashboard',
-            'AVDCTAIDashboard',
-            array(
-                'ajaxUrl' => admin_url('admin-ajax.php'),
-                'nonce'   => wp_create_nonce('avdctai_dashboard_stats'),
-                'page'    => $page,
-                'strings' => array(
-                    'loading' => __('Gegevens laden…', 'avd-cta-insights'),
-                    'error'   => __('De gegevens konden niet worden geladen.', 'avd-cta-insights'),
-                ),
-            )
-        );
+            wp_localize_script(
+                'avd-cta-insights-tracking-test',
+                'AVDCTAITrackingTest',
+                array(
+                    'ajaxUrl' => admin_url('admin-ajax.php'),
+                    'action'  => AVDCTAI_Plugin::AJAX_ACTION,
+                    'nonce'   => wp_create_nonce('avdctai_event'),
+                )
+            );
+        }
     }
 
     private static function current_plugin_page(): string {

@@ -4,7 +4,7 @@ Tags: conversion, analytics, cta, marketing, optimization
 Requires at least: 6.4
 Tested up to: 7.0
 Requires PHP: 8.0
-Stable tag: 4.0.0.18
+Stable tag: 4.0.0.19
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -53,6 +53,13 @@ No. Tracking data is stored inside the WordPress installation.
 6. Live Events.
 
 == Changelog ==
+
+= 4.0.0.19 =
+* Added the opt-in Project Bridge for measurable cross-project traffic.
+* Added configurable project, audience and overview CTA destinations.
+* Added Project Bridge impression, click-session and CTR reporting.
+* Added shortcode and optional homepage placement without automatic publication.
+
 
 = 4.0.0.18 =
 * Fixed the admin tracking test after the AJAX action rename.

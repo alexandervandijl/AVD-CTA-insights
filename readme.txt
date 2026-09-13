@@ -23,8 +23,9 @@ Features include:
 * Configurable CTA Templates
 * Live Events
 * Bot and suspicious-event filtering
+* Opt-in Project Bridge for measurable traffic between projects or websites
 
-The plugin does not automatically modify website content in the current release.
+The plugin does not automatically modify website content in the current release. Project Bridge is disabled by default and only appears after an administrator explicitly enables it and chooses a placement.
 
 == Installation ==
 
@@ -32,16 +33,21 @@ The plugin does not automatically modify website content in the current release.
 2. Open AVD CTA Insights in the WordPress admin menu.
 3. Review the dashboard and settings.
 4. Configure CTA Templates if needed.
+5. Configure Project Bridge only when you want to send measurable traffic to another project or website.
 
 == Frequently Asked Questions ==
 
 = Does the plugin automatically change my website? =
 
-No. The current release only provides analysis, recommendations and previews.
+No. The current release only provides analysis, recommendations and previews by default. Project Bridge is opt-in: an administrator must explicitly enable it and choose automatic homepage placement or place its shortcode.
 
 = Does the plugin send analytics data to an external server? =
 
 No. Tracking data is stored inside the WordPress installation.
+
+= What does Project Bridge measure? =
+
+It measures local Project Bridge impressions, outgoing CTA click sessions and click-through rate. Conversion outcomes on the destination website should be measured by that destination website.
 
 == Screenshots ==
 

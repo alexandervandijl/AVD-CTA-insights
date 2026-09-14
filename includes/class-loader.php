@@ -33,6 +33,7 @@ final class AVDCTAI_Loader {
         self::require_file($base_path . 'includes/services/class-visitor-intelligence.php');
         self::require_file($base_path . 'includes/services/class-page-benchmarks.php');
         self::require_file($base_path . 'includes/services/class-project-bridge.php');
+        self::require_file($base_path . 'includes/services/class-project-hub.php');
 
         /*
          * Admin services
@@ -87,6 +88,7 @@ final class AVDCTAI_Loader {
         self::init_class('AVDCTAI_Installer');
         self::init_class('AVDCTAI_Event_Archive');
         self::init_class('AVDCTAI_Project_Bridge');
+        self::init_class('AVDCTAI_Project_Hub');
         self::init_class('AVDCTAI_Admin');
         self::init_class('AVDCTAI_Leads');
         self::init_class('AVDCTAI_AI');

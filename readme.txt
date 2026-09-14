@@ -4,7 +4,7 @@ Tags: conversion, analytics, cta, marketing, optimization
 Requires at least: 6.4
 Tested up to: 7.0
 Requires PHP: 8.0
-Stable tag: 4.0.0.19
+Stable tag: 4.0.0.20
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -23,9 +23,10 @@ Features include:
 * Configurable CTA Templates
 * Live Events
 * Bot and suspicious-event filtering
-* Opt-in Project Bridge for measurable traffic between projects or websites
+* Opt-in Project Bridge for measurable traffic to one project or website
+* Opt-in Project Hub for measurable traffic to multiple projects or websites
 
-The plugin does not automatically modify website content in the current release. Project Bridge is disabled by default and only appears after an administrator explicitly enables it and chooses a placement.
+The plugin does not automatically modify website content by default. Project Bridge and Project Hub are disabled by default and only appear after an administrator explicitly enables them and chooses a placement.
 
 == Installation ==
 
@@ -33,13 +34,14 @@ The plugin does not automatically modify website content in the current release.
 2. Open AVD CTA Insights in the WordPress admin menu.
 3. Review the dashboard and settings.
 4. Configure CTA Templates if needed.
-5. Configure Project Bridge only when you want to send measurable traffic to another project or website.
+5. Configure Project Bridge when you want to highlight one external project.
+6. Configure Project Hub when you want to show multiple project cards and measure cross-project traffic.
 
 == Frequently Asked Questions ==
 
 = Does the plugin automatically change my website? =
 
-No. The current release only provides analysis, recommendations and previews by default. Project Bridge is opt-in: an administrator must explicitly enable it and choose automatic homepage placement or place its shortcode.
+No. Analysis and tracking work without automatically publishing promotional content. Project Bridge and Project Hub are opt-in: an administrator must explicitly enable them and choose automatic homepage placement or use their shortcode.
 
 = Does the plugin send analytics data to an external server? =
 
@@ -48,6 +50,10 @@ No. Tracking data is stored inside the WordPress installation.
 = What does Project Bridge measure? =
 
 It measures local Project Bridge impressions, outgoing CTA click sessions and click-through rate. Conversion outcomes on the destination website should be measured by that destination website.
+
+= What does Project Hub measure? =
+
+It measures Project Hub impression sessions, outgoing click sessions and click-through rate. Each configured project card uses its own CTA event so administrators can compare which destinations attract interest.
 
 == Screenshots ==
 
@@ -60,19 +66,24 @@ It measures local Project Bridge impressions, outgoing CTA click sessions and cl
 
 == Changelog ==
 
+= 4.0.0.20 =
+* Added the opt-in Project Hub for measurable traffic to multiple projects or websites.
+* Added up to four configurable project cards with independent CTA tracking.
+* Added Project Hub impression, click-session and CTR reporting.
+* Added automatic UTM attribution for Project Hub destinations.
+* Kept all destination content administrator-configured so the public plugin remains site-neutral.
+
 = 4.0.0.19 =
 * Added the opt-in Project Bridge for measurable cross-project traffic.
 * Added configurable project, audience and overview CTA destinations.
 * Added Project Bridge impression, click-session and CTR reporting.
 * Added shortcode and optional homepage placement without automatic publication.
 
-
 = 4.0.0.18 =
 * Fixed the admin tracking test after the AJAX action rename.
 * Added recovery for legacy AVD tracking data without deleting old options.
 * Added a durable event archive so statistics no longer disappear when the recent-event buffer reaches its limit.
 * Restored archived events in dashboard and AI statistics.
-
 
 = 4.0.0.15 =
 * Made frontend tracking and dashboard integration more robust.
